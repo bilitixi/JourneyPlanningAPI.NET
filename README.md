@@ -16,12 +16,26 @@ Set `SKIP_DB_INIT=true` to skip that.
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `MYSQL_URL` (or `DATABASE_URL`) | MySQL connection as a URL, e.g. `mysql://user:pass@host:3306/journey_planning?ssl-mode=Required`. Takes precedence over the variables below | – |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL connection | `localhost` / `3306` / `root` / empty / `journey_planning` |
+| `MYSQL_SSL_MODE` | `None`, `Preferred`, `Required`, `VerifyCA`, `VerifyFull` (most hosted MySQL needs `Required`) | driver default (`Preferred`) |
+| `PORT` | Port to listen on (set automatically by Render/Heroku) | `5000` in Docker |
 | `JWT_SECRET_KEY` | HS256 signing key | `test-secret-key` (change it!) |
 | `OPENWEATHER_API_KEY` | Weather forecast endpoint | required for `/api/weather` |
 | `OPENROUTER_API_KEY` | AI recommendations (falls back to canned data if unavailable) | optional |
 
 Docker: `docker build -t journey-api-net . && docker run -p 5000:5000 --env-file .env journey-api-net`
+
+If the database can't be reached at startup, the app logs which host it tried and exits with code 1
+(transient errors are retried first).
+
+### Deploying to Render
+
+The container doesn't include MySQL, so `localhost` won't work there. Render has no managed MySQL, so either
+use an external MySQL (Aiven, TiDB Cloud, Railway, DigitalOcean, ...) or run MySQL as a Render private
+service with a disk. Then, in the web service's **Environment** settings, set `MYSQL_URL` (or the
+`MYSQL_*` variables), plus `MYSQL_SSL_MODE=Required` if your provider needs TLS, and `JWT_SECRET_KEY`.
+Allow inbound connections from Render on the database side if your provider uses an IP allowlist.
 
 ## Endpoints
 
