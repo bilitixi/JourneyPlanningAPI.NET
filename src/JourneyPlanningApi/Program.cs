@@ -13,12 +13,22 @@ builder.Services.AddControllers();
 // CORS: any origin on /api/* (Flask: CORS(app, resources={r"/api/*": {"origins": "*"}}))
 builder.Services.AddCors(o => o.AddPolicy("api", p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
-// MySQL configuration: MYSQL_URL / DATABASE_URL, ConnectionStrings:Default, or MYSQL_HOST / PORT / USER /
-// PASSWORD / DATABASE (same defaults as db.py). See DatabaseConfig.
-var dbConnection = DatabaseConfig.Build(builder.Configuration);
+// Database: MySQL (MYSQL_URL, ConnectionStrings:Default or MYSQL_HOST / PORT / USER / PASSWORD / DATABASE, same
+// defaults as db.py) or PostgreSQL (a postgres:// DATABASE_URL, e.g. a Render database). See DatabaseConfig.
+var db = DatabaseConfig.Build(builder.Configuration);
+
+// Map DateTime to "timestamp without time zone" on PostgreSQL, like MySQL DATETIME, instead of requiring UTC values.
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(dbConnection.ConnectionString, new MySqlServerVersion(new Version(8, 0, 0)),
-        mysql => mysql.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
+{
+    if (db.Provider == DbProvider.PostgreSql)
+        options.UseNpgsql(db.ConnectionString,
+            o => o.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null));
+    else
+        options.UseMySql(db.ConnectionString, new MySqlServerVersion(new Version(8, 0, 0)),
+            o => o.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null));
+});
 
 // Hosting platforms such as Render and Heroku tell the app which port to listen on via PORT.
 if (Environment.GetEnvironmentVariable("PORT") is { Length: > 0 } listenPort)
@@ -34,8 +44,8 @@ var app = builder.Build();
 // Create tables on startup (Flask: init_db()). Can be skipped with SKIP_DB_INIT=true.
 if (!app.Configuration.GetValue<bool>("SKIP_DB_INIT"))
 {
-    var target = DatabaseConfig.Describe(dbConnection);
-    app.Logger.LogInformation("Connecting to MySQL at {Target}", target);
+    var target = db.Description;
+    app.Logger.LogInformation("Connecting to {Target}", target);
     try
     {
         using var scope = app.Services.CreateScope();
@@ -45,7 +55,7 @@ if (!app.Configuration.GetValue<bool>("SKIP_DB_INIT"))
     catch (Exception ex)
     {
         app.Logger.LogCritical(ex,
-            "Could not initialise the database at {Target}. Set MYSQL_URL (mysql://user:pass@host:port/db) or " +
+            "Could not initialise the database at {Target}. Set DATABASE_URL (postgresql://... or mysql://...) or " +
             "MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE to a reachable MySQL server " +
             "(MYSQL_SSL_MODE=Required for most hosted providers), or set SKIP_DB_INIT=true to skip table creation.",
             target);

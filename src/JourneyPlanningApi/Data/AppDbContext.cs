@@ -14,6 +14,8 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        if (Database.IsNpgsql()) b.HasPostgresExtension("citext");
+
         b.Entity<User>(e =>
         {
             e.ToTable("users");
@@ -21,7 +23,10 @@ public class AppDbContext : DbContext
             e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
             e.Property(x => x.FirstName).HasColumnName("first_name").HasMaxLength(100).IsRequired();
             e.Property(x => x.LastName).HasColumnName("last_name").HasMaxLength(100).IsRequired();
-            e.Property(x => x.Email).HasColumnName("email").HasMaxLength(255).IsRequired();
+            var email = e.Property(x => x.Email).HasColumnName("email").HasMaxLength(255).IsRequired();
+            // MySQL compares emails case-insensitively (default collation); citext gives PostgreSQL the same
+            // behaviour for login lookups and the unique index.
+            if (Database.IsNpgsql()) email.HasColumnType("citext");
             e.HasIndex(x => x.Email).IsUnique();
             e.Property(x => x.PasswordHash).HasColumnName("password_hash").HasMaxLength(255).IsRequired();
             e.Property(x => x.Role).HasColumnName("role").HasMaxLength(20).IsRequired().HasDefaultValue("user");
