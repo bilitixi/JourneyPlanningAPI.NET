@@ -73,7 +73,13 @@ public class AuthService
             await _db.SaveChangesAsync();
 
             if (!await _email.SendVerificationEmailAsync(user.Email, user.VerificationToken))
+            {
+                // No email went out, so drop the token: otherwise resend-verification answers 429 for 15 minutes.
+                user.VerificationToken = null;
+                user.VerificationExpires = null;
+                await _db.SaveChangesAsync();
                 return new(new { error = "User created but email failed" }, 500);
+            }
 
             return new(new { message = "User registered successfully. Please check your email.", user_id = user.Id }, 201);
         }
@@ -216,7 +222,12 @@ public class AuthService
             await _db.SaveChangesAsync();
 
             if (!await _email.SendVerificationEmailAsync(user.Email, user.VerificationToken))
+            {
+                user.VerificationToken = null;
+                user.VerificationExpires = null;
+                await _db.SaveChangesAsync();
                 return new(new { error = "Email send failed" }, 500);
+            }
             return new(new { message = "Verification email sent" }, 200);
         }
         catch (Exception e)
@@ -239,7 +250,13 @@ public class AuthService
             await _db.SaveChangesAsync();
 
             if (!await _email.SendPasswordResetEmailAsync(user.Email, user.ResetToken))
+            {
+                // No email went out, so drop the token: otherwise the next attempt answers 429 for 15 minutes.
+                user.ResetToken = null;
+                user.ResetExpires = null;
+                await _db.SaveChangesAsync();
                 return new(new { error = "Reset email failed" }, 500);
+            }
             return new(new { message = "Reset email sent" }, 200);
         }
         catch (Exception e)

@@ -42,12 +42,14 @@ builder.Services.AddScoped<AuthService>();
 builder.Services.AddHttpClient<WeatherService>();
 builder.Services.AddHttpClient<AiService>();
 builder.Services.AddScoped<EmailService>();
-// Email goes out over SMTP (MAIL_* settings, as in the Flask app) unless RESEND_API_KEY is set, in which case
-// Resend's HTTPS API is used instead (for hosts that block outbound SMTP).
-if (string.IsNullOrWhiteSpace(builder.Configuration["RESEND_API_KEY"]))
-    builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+// Email provider: Mailgun's HTTPS API when MAILGUN_API_KEY is set, else Resend's when RESEND_API_KEY is set, else
+// SMTP (MAIL_* settings). The HTTPS APIs work on hosts that block outbound SMTP, such as Render.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["MAILGUN_API_KEY"]))
+    builder.Services.AddHttpClient<IEmailSender, MailgunEmailSender>(c => c.Timeout = SmtpEmailSender.SendTimeout);
+else if (!string.IsNullOrWhiteSpace(builder.Configuration["RESEND_API_KEY"]))
+    builder.Services.AddHttpClient<IEmailSender, ResendEmailSender>(c => c.Timeout = SmtpEmailSender.SendTimeout);
 else
-    builder.Services.AddHttpClient<IEmailSender, ResendEmailSender>();
+    builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
 var app = builder.Build();
 
