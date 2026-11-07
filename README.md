@@ -98,5 +98,5 @@ Integration tests run the full HTTP pipeline against in-memory SQLite with stubb
 - `PUT /api/journeys/{id}` also updates `notes` (Flask ignored it).
 - `/api/admin/logs` is actually routed here; in Flask the admin blueprint was never registered. Nothing writes
   to `api_usage_logs` yet (Flask's `middleware/request_logger.py` was an empty file).
-- `POST /api/recommendations/{id}` looks the journey up by id only, exactly like Flask, so any
-  authenticated user can request recommendations for any journey. Restrict to the owner if that is not intended.
+- `POST /api/recommendations/{id}` only works for the caller's own journeys (404 otherwise). Flask looked the
+  journey up by id only, so any logged-in user could get recommendations (and the destination) for any journey.
