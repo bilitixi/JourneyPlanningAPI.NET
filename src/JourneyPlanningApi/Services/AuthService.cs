@@ -10,10 +10,22 @@ public record ServiceResult(object Body, int Status);
 
 public class AuthService
 {
+    /// <summary>Verification and reset links expire after 15 minutes, as in the Flask app.</summary>
+    public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(15);
+
     private readonly AppDbContext _db;
     private readonly JwtService _jwt;
+    private readonly EmailService _email;
 
-    public AuthService(AppDbContext db, JwtService jwt) { _db = db; _jwt = jwt; }
+    public AuthService(AppDbContext db, JwtService jwt, EmailService email) { _db = db; _jwt = jwt; _email = email; }
+
+    // Naive UTC timestamps, like Flask's datetime.utcnow() stored in DATETIME / timestamp without time zone.
+    private static DateTime UtcNow => DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+
+    /// <summary>Equivalent of Python's secrets.token_urlsafe(32).</summary>
+    private static string NewToken() =>
+        Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private static string? Str(JsonObject d, string key) =>
         d[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
@@ -45,11 +57,15 @@ public class AuthService
             {
                 FirstName = first, LastName = last, Email = email,
                 PasswordHash = Hash(password), Role = "user",
+                IsVerified = false, VerificationToken = NewToken(), VerificationExpires = UtcNow + TokenLifetime,
             };
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
 
-            return new(new { message = "User registered successfully", user_id = user.Id }, 201);
+            if (!await _email.SendVerificationEmailAsync(user.Email, user.VerificationToken))
+                return new(new { error = "User created but email failed" }, 500);
+
+            return new(new { message = "User registered successfully. Please check your email.", user_id = user.Id }, 201);
         }
         catch (Exception e)
         {
@@ -67,6 +83,9 @@ public class AuthService
 
             if (user is null || !Verify(password, user.PasswordHash))
                 return new(new { error = "Invalid email or password" }, 401);
+
+            if (!user.IsVerified)
+                return new(new { error = "Please verify your email" }, 403);
 
             var token = _jwt.CreateToken(user.Id, user.Email, user.Role, TimeSpan.FromHours(24));
             return new(new Dictionary<string, object?>
@@ -95,9 +114,10 @@ public class AuthService
             var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
             if (user is null) return new(new { error = "User not found" }, 404);
 
-            var changingCredentials = data.ContainsKey("email") || data.ContainsKey("password");
+            var changingEmail = data.ContainsKey("email") && Str(data, "email") != user.Email;
+            var changingCredentials = changingEmail || data.ContainsKey("password");
             if (changingCredentials && !Verify(Str(data, "current_password"), user.PasswordHash))
-                return new(new { error = "current_password is required and must be correct to change email or password" }, 401);
+                return new(new { error = "Missing or incorrect current password" }, 401);
 
             if (data.ContainsKey("email"))
             {
@@ -136,7 +156,7 @@ public class AuthService
             if (user is null) return new(new { error = "User not found" }, 404);
 
             if (!Verify(Str(data, "current_password"), user.PasswordHash))
-                return new(new { error = "current_password is required and must be correct to delete this account" }, 401);
+                return new(new { error = "Missing or incorrect current password" }, 401);
 
             // Remove the user's journeys first to satisfy the foreign key constraint
             _db.Journeys.RemoveRange(_db.Journeys.Where(j => j.UserId == userId));
@@ -144,6 +164,94 @@ public class AuthService
             await _db.SaveChangesAsync();
 
             return new(new { message = "Account deleted successfully" }, 200);
+        }
+        catch (Exception e)
+        {
+            return new(new { error = e.Message }, 500);
+        }
+    }
+
+    public async Task<ServiceResult> VerifyEmailAsync(string? token)
+    {
+        try
+        {
+            var user = token is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.VerificationToken == token);
+            if (user is null) return new(new { error = "Invalid token" }, 400);
+            if (user.VerificationExpires < UtcNow) return new(new { error = "Token expired" }, 400);
+
+            user.IsVerified = true;
+            user.VerificationToken = null;
+            user.VerificationExpires = null;
+            await _db.SaveChangesAsync();
+            return new(new { message = "Email verified successfully" }, 200);
+        }
+        catch (Exception e)
+        {
+            return new(new { error = e.Message }, 500);
+        }
+    }
+
+    public async Task<ServiceResult> ResendVerificationEmailAsync(string? email)
+    {
+        try
+        {
+            var user = email is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user is null) return new(new { error = "User not found" }, 404);
+            if (user.IsVerified) return new(new { error = "Already verified" }, 400);
+            if (user.VerificationToken is not null && user.VerificationExpires > UtcNow)
+                return new(new { error = "Please wait before requesting another verification email" }, 429);
+
+            user.VerificationToken = NewToken();
+            user.VerificationExpires = UtcNow + TokenLifetime;
+            await _db.SaveChangesAsync();
+
+            if (!await _email.SendVerificationEmailAsync(user.Email, user.VerificationToken))
+                return new(new { error = "Email send failed" }, 500);
+            return new(new { message = "Verification email sent" }, 200);
+        }
+        catch (Exception e)
+        {
+            return new(new { error = e.Message }, 500);
+        }
+    }
+
+    public async Task<ServiceResult> ForgotPasswordAsync(string? email)
+    {
+        try
+        {
+            var user = email is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user is null) return new(new { message = "If email exists, reset sent" }, 200);
+            if (user.ResetToken is not null && user.ResetExpires > UtcNow)
+                return new(new { error = "Please wait before requesting another password reset email" }, 429);
+
+            user.ResetToken = NewToken();
+            user.ResetExpires = UtcNow + TokenLifetime;
+            await _db.SaveChangesAsync();
+
+            if (!await _email.SendPasswordResetEmailAsync(user.Email, user.ResetToken))
+                return new(new { error = "Reset email failed" }, 500);
+            return new(new { message = "Reset email sent" }, 200);
+        }
+        catch (Exception e)
+        {
+            return new(new { error = e.Message }, 500);
+        }
+    }
+
+    public async Task<ServiceResult> ResetPasswordAsync(string? token, string? newPassword)
+    {
+        try
+        {
+            var user = token is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.ResetToken == token);
+            if (user is null) return new(new { error = "Invalid token" }, 400);
+            if (user.ResetExpires < UtcNow) return new(new { error = "Token expired" }, 400);
+            if (newPassword is null) return new(new { error = "new_password must be a string" }, 400);
+
+            user.PasswordHash = Hash(newPassword);
+            user.ResetToken = null;
+            user.ResetExpires = null;
+            await _db.SaveChangesAsync();
+            return new(new { message = "Password reset successful" }, 200);
         }
         catch (Exception e)
         {

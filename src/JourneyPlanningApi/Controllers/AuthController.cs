@@ -34,6 +34,43 @@ public class AuthController : ApiControllerBase
         return Respond(r.Body, r.Status);
     }
 
+    [HttpPost("verify-email")]
+    public async Task<IActionResult> VerifyEmail()
+    {
+        var data = await ReadJsonAsync();
+        if (FirstMissing(data, "token") is { } missing) return Error($"Missing required field: {missing}", 400);
+        var r = await _auth.VerifyEmailAsync(GetString(data!, "token"));
+        return Respond(r.Body, r.Status);
+    }
+
+    [HttpPost("resend-verification")]
+    public async Task<IActionResult> ResendVerification()
+    {
+        var data = await ReadJsonAsync();
+        if (FirstMissing(data, "email") is { } missing) return Error($"Missing required field: {missing}", 400);
+        var r = await _auth.ResendVerificationEmailAsync(GetString(data!, "email"));
+        return Respond(r.Body, r.Status);
+    }
+
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword()
+    {
+        var data = await ReadJsonAsync();
+        if (FirstMissing(data, "email") is { } missing) return Error($"Missing required field: {missing}", 400);
+        var r = await _auth.ForgotPasswordAsync(GetString(data!, "email"));
+        return Respond(r.Body, r.Status);
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword()
+    {
+        var data = await ReadJsonAsync();
+        if (FirstMissing(data, "token", "new_password") is { } missing)
+            return Error($"Missing required field: {missing}", 400);
+        var r = await _auth.ResetPasswordAsync(GetString(data!, "token"), GetString(data!, "new_password"));
+        return Respond(r.Body, r.Status);
+    }
+
     [HttpPut("me"), TokenRequired]
     public async Task<IActionResult> UpdateMe()
     {

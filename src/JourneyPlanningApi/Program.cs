@@ -41,6 +41,13 @@ builder.Services.AddSingleton<JwtService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddHttpClient<WeatherService>();
 builder.Services.AddHttpClient<AiService>();
+builder.Services.AddScoped<EmailService>();
+// Email goes out over SMTP (MAIL_* settings, as in the Flask app) unless RESEND_API_KEY is set, in which case
+// Resend's HTTPS API is used instead (for hosts that block outbound SMTP).
+if (string.IsNullOrWhiteSpace(builder.Configuration["RESEND_API_KEY"]))
+    builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+else
+    builder.Services.AddHttpClient<IEmailSender, ResendEmailSender>();
 
 var app = builder.Build();
 
@@ -52,7 +59,12 @@ if (!app.Configuration.GetValue<bool>("SKIP_DB_INIT"))
     try
     {
         using var scope = app.Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        dbContext.Database.EnsureCreated();
+        var added = await SchemaUpgrade.AddMissingUserColumnsAsync(dbContext, db.Provider);
+        if (added.Count > 0)
+            app.Logger.LogInformation("Added users columns {Columns}; existing accounts marked as verified",
+                string.Join(", ", added));
         app.Logger.LogInformation("Database tables created successfully");
     }
     catch (Exception ex)
@@ -66,7 +78,24 @@ if (!app.Configuration.GetValue<bool>("SKIP_DB_INIT"))
     }
 }
 
+if (string.IsNullOrWhiteSpace(app.Configuration["FRONTEND_URL"]))
+    app.Logger.LogWarning("FRONTEND_URL is not set; email links will point to {Url}", EmailService.DefaultFrontendUrl);
+
 app.UseCors("api");
+// Error responses without a body (unknown route, wrong method, ...) get the API's {"error": "..."} shape, so
+// clients that always call response.json() see a message instead of a JSON parse error.
+app.UseStatusCodePages(async ctx =>
+{
+    var res = ctx.HttpContext.Response;
+    res.ContentType = "application/json";
+    var message = res.StatusCode switch
+    {
+        404 => "Not found",
+        405 => "Method not allowed",
+        _ => Microsoft.AspNetCore.WebUtilities.ReasonPhrases.GetReasonPhrase(res.StatusCode),
+    };
+    await res.WriteAsJsonAsync(new { error = message });
+});
 app.MapGet("/", () => "Hello World!");
 app.MapControllers();
 

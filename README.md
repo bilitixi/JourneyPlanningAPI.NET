@@ -11,7 +11,9 @@ cp .env.example .env          # fill in values
 dotnet run --project src/JourneyPlanningApi --urls http://0.0.0.0:5000
 ```
 
-Tables (`users`, `journeys`, `api_usage_logs`) are created on startup (`EnsureCreated`).
+Tables (`users`, `journeys`, `api_usage_logs`) are created on startup (`EnsureCreated`). Columns added later (email
+verification / password reset) are added to an existing `users` table on startup; accounts that existed before
+that are marked as verified.
 Set `SKIP_DB_INIT=true` to skip that.
 
 | Variable | Purpose | Default |
@@ -24,6 +26,11 @@ Set `SKIP_DB_INIT=true` to skip that.
 | `JWT_SECRET_KEY` | HS256 signing key | `test-secret-key` (change it!) |
 | `OPENWEATHER_API_KEY` | Weather forecast endpoint | required for `/api/weather` |
 | `OPENROUTER_API_KEY` | AI recommendations (falls back to canned data if unavailable) | optional |
+| `MAIL_SERVER` / `MAIL_PORT` / `MAIL_USE_TLS` | SMTP server for verification and reset emails (STARTTLS) | `smtp.gmail.com` / `587` / `true` |
+| `MAIL_USERNAME` / `MAIL_PASSWORD` | SMTP login (for Gmail: your address and an [app password](https://myaccount.google.com/apppasswords)) | – |
+| `MAIL_DEFAULT_SENDER` | From address | `MAIL_USERNAME` |
+| `RESEND_API_KEY` | Send email through Resend's HTTPS API instead of SMTP (for hosts that block SMTP) | – (SMTP is used) |
+| `FRONTEND_URL` | Base URL for the links in emails (`/verify-email?token=`, `/reset-password?token=`) | `http://localhost:3000` |
 
 Docker: `docker build -t journey-api-net . && docker run -p 5000:5000 --env-file .env journey-api-net`
 
@@ -40,7 +47,9 @@ The container doesn't include a database, so `localhost` won't work there. Eithe
 - **External MySQL** (Aiven, TiDB Cloud, Railway, ...): set `MYSQL_URL` or the `MYSQL_*` variables, plus
   `MYSQL_SSL_MODE=Required` if the provider needs TLS.
 
-Also set `JWT_SECRET_KEY`. Render *Secret Files* are mounted at `/etc/secrets/`, where the app does not look for
+Also set `JWT_SECRET_KEY`, `FRONTEND_URL` (e.g. `https://journeyplanningapp.bilitixi.org`) and the `MAIL_*`
+variables (or `RESEND_API_KEY`) so verification and reset emails can be sent; registration returns 500
+"User created but email failed" when email can't be sent. Render *Secret Files* are mounted at `/etc/secrets/`, where the app does not look for
 `.env`, so use environment variables.
 
 On PostgreSQL the `email` column uses `citext` so email lookups stay case-insensitive as on MySQL; the app
@@ -51,8 +60,12 @@ enables the extension itself (the database owner is allowed to on PostgreSQL 13+
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/` | – | `Hello World!` |
-| POST | `/api/auth/register` | – | `first_name`, `last_name`, `email`, `password` → 201 `{message, user_id}` |
-| POST | `/api/auth/login` | – | `email`, `password` → `{access_token, user}` (24h token) |
+| POST | `/api/auth/register` | – | `first_name`, `last_name`, `email`, `password` → 201 `{message, user_id}`; emails a verification link |
+| POST | `/api/auth/login` | – | `email`, `password` → `{access_token, user}` (24h token); 403 until the email is verified |
+| POST | `/api/auth/verify-email` | – | `token` from the verification email |
+| POST | `/api/auth/resend-verification` | – | `email`; 429 while the previous link is still valid |
+| POST | `/api/auth/forgot-password` | – | `email`; emails a reset link (429 while the previous one is still valid) |
+| POST | `/api/auth/reset-password` | – | `token`, `new_password` |
 | PUT | `/api/auth/me` | Bearer | Update own profile; `current_password` required to change email/password |
 | DELETE | `/api/auth/me` | Bearer | Delete own account + journeys (`current_password` required) |
 | GET | `/api/journeys` | Bearer | List own journeys → `{journeys: [...]}` |
@@ -75,6 +88,9 @@ dotnet test
 Integration tests run the full HTTP pipeline against in-memory SQLite with stubbed OpenWeather/OpenRouter calls.
 
 ## Differences from the Flask app
+
+- Ported from the Flask `deploy` branch: PostgreSQL via `DATABASE_URL`, email verification (login blocked until
+  verified) and password reset over SMTP, with the same messages, status codes and 15-minute links.
 
 - CORS only allows the origins in `CORS_ORIGINS` (Flask allowed any origin). Set `CORS_ORIGINS=*` to restore that.
 
