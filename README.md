@@ -29,7 +29,9 @@ Set `SKIP_DB_INIT=true` to skip that.
 | `MAIL_SERVER` / `MAIL_PORT` / `MAIL_USE_TLS` | SMTP server for verification and reset emails (STARTTLS) | `smtp.gmail.com` / `587` / `true` |
 | `MAIL_USERNAME` / `MAIL_PASSWORD` | SMTP login (for Gmail: your address and an [app password](https://myaccount.google.com/apppasswords)) | – |
 | `MAIL_DEFAULT_SENDER` | From address | `MAIL_USERNAME` |
-| `RESEND_API_KEY` | Send email through Resend's HTTPS API instead of SMTP (for hosts that block SMTP) | – (SMTP is used) |
+| `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` | Send email through Mailgun's HTTPS API instead of SMTP (as the Flask app did before switching to SMTP). From address: `postmaster@MAILGUN_DOMAIN`. **Use this on Render**, which blocks outbound SMTP | – (SMTP is used) |
+| `MAILGUN_API_URL` | Mailgun region: `https://api.eu.mailgun.net` for EU accounts | `https://api.mailgun.net` |
+| `RESEND_API_KEY` / `RESEND_FROM` | Alternative HTTPS provider (Resend), used when Mailgun isn't configured | – / `onboarding@resend.dev` |
 | `FRONTEND_URL` | Base URL for the links in emails (`/verify-email?token=`, `/reset-password?token=`) | `http://localhost:3000` |
 
 Docker: `docker build -t journey-api-net . && docker run -p 5000:5000 --env-file .env journey-api-net`
@@ -47,9 +49,10 @@ The container doesn't include a database, so `localhost` won't work there. Eithe
 - **External MySQL** (Aiven, TiDB Cloud, Railway, ...): set `MYSQL_URL` or the `MYSQL_*` variables, plus
   `MYSQL_SSL_MODE=Required` if the provider needs TLS.
 
-Also set `JWT_SECRET_KEY`, `FRONTEND_URL` (e.g. `https://journeyplanningapp.bilitixi.org`) and the `MAIL_*`
-variables (or `RESEND_API_KEY`) so verification and reset emails can be sent; registration returns 500
-"User created but email failed" when email can't be sent. Render *Secret Files* are mounted at `/etc/secrets/`, where the app does not look for
+Also set `JWT_SECRET_KEY`, `FRONTEND_URL` (e.g. `https://journeyplanningapp.bilitixi.org`) and
+`MAILGUN_API_KEY` + `MAILGUN_DOMAIN` so verification and reset emails can be sent. Render can't reach SMTP servers
+(sending via `smtp.gmail.com` fails with "Network is unreachable"), so the `MAIL_*` SMTP settings only work
+elsewhere. When an email can't be sent the request fails within 20 seconds and can be retried straight away. Render *Secret Files* are mounted at `/etc/secrets/`, where the app does not look for
 `.env`, so use environment variables.
 
 Email lookups (register, login, forgot password, ...) ignore case on every database, so `John@Example.com` and

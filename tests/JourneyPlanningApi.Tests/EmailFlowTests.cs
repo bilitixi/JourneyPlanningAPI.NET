@@ -73,6 +73,15 @@ public class EmailFlowTests : IDisposable
         var r = await Post("/api/auth/register", NewUser("f@x.com"));
         Assert.Equal(HttpStatusCode.InternalServerError, r.StatusCode);
         Assert.Equal("User created but email failed", await Error(r));
+
+        // No email went out, so resending is allowed straight away instead of 429 for 15 minutes
+        var failedResend = await Post("/api/auth/resend-verification", new { email = "f@x.com" });
+        Assert.Equal("Email send failed", await Error(failedResend));
+        _app.Email.Fail = false;
+        var resent = await Post("/api/auth/resend-verification", new { email = "f@x.com" });
+        Assert.Equal(HttpStatusCode.OK, resent.StatusCode);
+        var token = _app.Email.LastToken("f@x.com", "verify-email");
+        Assert.Equal(HttpStatusCode.OK, (await Post("/api/auth/verify-email", new { token })).StatusCode);
     }
 
     [Fact]
@@ -170,6 +179,12 @@ public class EmailFlowTests : IDisposable
         var r = await Post("/api/auth/forgot-password", new { email = "ff@x.com" });
         Assert.Equal(HttpStatusCode.InternalServerError, r.StatusCode);
         Assert.Equal("Reset email failed", await Error(r));
+
+        // The failed attempt doesn't block a retry with 429
+        _app.Email.Fail = false;
+        var retry = await Post("/api/auth/forgot-password", new { email = "ff@x.com" });
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal("Reset email sent", await Message(retry));
     }
 
     [Fact]

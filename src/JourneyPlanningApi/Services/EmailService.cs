@@ -60,6 +60,8 @@ public class EmailService
 /// </summary>
 public class SmtpEmailSender : IEmailSender
 {
+    public static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(20);
+
     private readonly ILogger<SmtpEmailSender> _log;
     private readonly string _server;
     private readonly int _port;
@@ -98,10 +100,13 @@ public class SmtpEmailSender : IEmailSender
             message.To.Add(to);
             message.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(htmlBody, null, "text/html"));
 
-            using var smtp = new SmtpClient(_server, _port) { EnableSsl = _useTls, Timeout = 20_000 };
+            using var smtp = new SmtpClient(_server, _port) { EnableSsl = _useTls };
             if (!string.IsNullOrEmpty(_username))
                 smtp.Credentials = new NetworkCredential(_username, _password);
-            await smtp.SendMailAsync(message);
+            // SmtpClient.Timeout does not apply to SendMailAsync; without this a blocked SMTP port hangs the request
+            // for minutes (the OS connect timeout).
+            using var cts = new CancellationTokenSource(SendTimeout);
+            await smtp.SendMailAsync(message, cts.Token);
             return true;
         }
         catch (Exception ex)
@@ -114,7 +119,9 @@ public class SmtpEmailSender : IEmailSender
 
 /// <summary>
 /// Alternative to SMTP for hosts that block outbound SMTP: Resend's HTTPS API, used when RESEND_API_KEY is set.
-/// Sender: MAIL_DEFAULT_SENDER (default Resend's test sender, which only delivers to the account's own address).
+/// Sender: RESEND_FROM, an address on a domain verified in Resend (default Resend's test sender
+/// onboarding@resend.dev, which only delivers to the Resend account's own address). MAIL_DEFAULT_SENDER is not
+/// used here because it is usually a Gmail address, which Resend refuses to send from.
 /// </summary>
 public class ResendEmailSender : IEmailSender
 {
@@ -130,7 +137,7 @@ public class ResendEmailSender : IEmailSender
         _http = http;
         _log = log;
         _apiKey = config["RESEND_API_KEY"];
-        var sender = config["MAIL_DEFAULT_SENDER"];
+        var sender = config["RESEND_FROM"];
         _from = $"Journey Planning <{(string.IsNullOrWhiteSpace(sender) ? "onboarding@resend.dev" : sender)}>";
     }
 
@@ -158,6 +165,66 @@ public class ResendEmailSender : IEmailSender
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             _log.LogError(ex, "Could not reach Resend");
+            return false;
+        }
+    }
+}
+
+/// <summary>
+/// Mailgun's HTTPS API, as used by the Flask deploy branch before it switched to SMTP: MAILGUN_API_KEY and
+/// MAILGUN_DOMAIN, sending from "Journey Planning &lt;postmaster@{MAILGUN_DOMAIN}&gt;". MAILGUN_API_URL selects the
+/// region (default https://api.mailgun.net; EU accounts use https://api.eu.mailgun.net). Works on hosts that block SMTP.
+/// </summary>
+public class MailgunEmailSender : IEmailSender
+{
+    private readonly HttpClient _http;
+    private readonly ILogger<MailgunEmailSender> _log;
+    private readonly string? _apiKey;
+    private readonly string? _domain;
+    private readonly string _apiUrl;
+
+    public MailgunEmailSender(HttpClient http, IConfiguration config, ILogger<MailgunEmailSender> log)
+    {
+        _http = http;
+        _log = log;
+        _apiKey = config["MAILGUN_API_KEY"];
+        _domain = config["MAILGUN_DOMAIN"];
+        _apiUrl = (string.IsNullOrWhiteSpace(config["MAILGUN_API_URL"]) ? "https://api.mailgun.net" : config["MAILGUN_API_URL"]!)
+            .TrimEnd('/');
+    }
+
+    public async Task<bool> SendAsync(string to, string subject, string textBody, string htmlBody)
+    {
+        if (string.IsNullOrWhiteSpace(_domain))
+        {
+            _log.LogError("Mailgun error: MAILGUN_DOMAIN is not set");
+            return false;
+        }
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_apiUrl}/v3/{_domain}/messages")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["from"] = $"Journey Planning <postmaster@{_domain}>",
+                ["to"] = to,
+                ["subject"] = subject,
+                ["text"] = textBody,
+                ["html"] = htmlBody,
+            }),
+        };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
+            Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"api:{_apiKey}")));
+
+        try
+        {
+            using var resp = await _http.SendAsync(req);
+            if (resp.IsSuccessStatusCode) return true;
+            _log.LogError("Mailgun error ({Status}): {Body}", (int)resp.StatusCode, await resp.Content.ReadAsStringAsync());
+            return false;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _log.LogError(ex, "Mailgun error: could not reach {Url}", _apiUrl);
             return false;
         }
     }
