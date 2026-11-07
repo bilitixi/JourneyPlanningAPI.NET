@@ -22,6 +22,16 @@ public class AuthService
     // Naive UTC timestamps, like Flask's datetime.utcnow() stored in DATETIME / timestamp without time zone.
     private static DateTime UtcNow => DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
 
+    /// <summary>
+    /// Users whose email matches ignoring case (lower() on both sides works on PostgreSQL, MySQL and SQLite without
+    /// extensions). An exact-case match is preferred in case an older database holds addresses differing only by case.
+    /// </summary>
+    private IQueryable<User> ByEmail(string email)
+    {
+        var lowered = email.ToLowerInvariant();
+        return _db.Users.Where(u => u.Email.ToLower() == lowered).OrderByDescending(u => u.Email == email);
+    }
+
     /// <summary>Equivalent of Python's secrets.token_urlsafe(32).</summary>
     private static string NewToken() =>
         Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
@@ -50,7 +60,7 @@ public class AuthService
             if (first is null || last is null || email is null || password is null)
                 return new(new { error = "first_name, last_name, email and password must be strings" }, 400);
 
-            if (await _db.Users.AnyAsync(u => u.Email == email))
+            if (await ByEmail(email).AnyAsync())
                 return new(new { error = "Email already registered" }, 400);
 
             var user = new User
@@ -79,7 +89,7 @@ public class AuthService
         {
             var email = Str(data, "email");
             var password = Str(data, "password");
-            var user = email is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            var user = email is null ? null : await ByEmail(email).FirstOrDefaultAsync();
 
             if (user is null || !Verify(password, user.PasswordHash))
                 return new(new { error = "Invalid email or password" }, 401);
@@ -125,7 +135,7 @@ public class AuthService
                 if (email is null) return new(new { error = "email must be a string" }, 400);
                 if (email != user.Email)
                 {
-                    if (await _db.Users.AnyAsync(u => u.Email == email && u.Id != userId))
+                    if (await ByEmail(email).AnyAsync(u => u.Id != userId))
                         return new(new { error = "Email already registered" }, 400);
                     user.Email = email;
                 }
@@ -195,7 +205,7 @@ public class AuthService
     {
         try
         {
-            var user = email is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            var user = email is null ? null : await ByEmail(email).FirstOrDefaultAsync();
             if (user is null) return new(new { error = "User not found" }, 404);
             if (user.IsVerified) return new(new { error = "Already verified" }, 400);
             if (user.VerificationToken is not null && user.VerificationExpires > UtcNow)
@@ -219,7 +229,7 @@ public class AuthService
     {
         try
         {
-            var user = email is null ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            var user = email is null ? null : await ByEmail(email).FirstOrDefaultAsync();
             if (user is null) return new(new { message = "If email exists, reset sent" }, 200);
             if (user.ResetToken is not null && user.ResetExpires > UtcNow)
                 return new(new { error = "Please wait before requesting another password reset email" }, 429);
