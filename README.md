@@ -19,6 +19,7 @@ Set `SKIP_DB_INIT=true` to skip that.
 | `DATABASE_URL` (or `MYSQL_URL`) | Database as a URL. `postgresql://user:pass@host:5432/db` uses PostgreSQL (e.g. a Render database); `mysql://user:pass@host:3306/journey_planning?ssl-mode=Required` uses MySQL. Takes precedence over the variables below | – |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE` | MySQL connection | `localhost` / `3306` / `root` / empty / `journey_planning` |
 | `MYSQL_SSL_MODE` | `None`, `Preferred`, `Required`, `VerifyCA`, `VerifyFull` (most hosted MySQL needs `Required`) | driver default (`Preferred`) |
+| `CORS_ORIGINS` | Comma-separated origins allowed to call the API from a browser. `localhost` = localhost/127.0.0.1 on any port, `*` = any origin | `https://journeyplanningapp.bilitixi.org,https://journeyplanninguidraft.vercel.app,localhost` |
 | `PORT` | Port to listen on (set automatically by Render/Heroku) | `5000` in Docker |
 | `JWT_SECRET_KEY` | HS256 signing key | `test-secret-key` (change it!) |
 | `OPENWEATHER_API_KEY` | Weather forecast endpoint | required for `/api/weather` |
@@ -74,6 +75,8 @@ dotnet test
 Integration tests run the full HTTP pipeline against in-memory SQLite with stubbed OpenWeather/OpenRouter calls.
 
 ## Differences from the Flask app
+
+- CORS only allows the origins in `CORS_ORIGINS` (Flask allowed any origin). Set `CORS_ORIGINS=*` to restore that.
 
 - `budget` is serialized as a JSON number (Flask's `jsonify` emitted the `Decimal` as a string such as `"2500.00"`).
 - `PUT /api/journeys/{id}` also updates `notes` (Flask ignored it).
