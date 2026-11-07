@@ -1,5 +1,6 @@
 using JourneyPlanningApi.Auth;
 using JourneyPlanningApi.Data;
+using JourneyPlanningApi.Http;
 using JourneyPlanningApi.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,8 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
-// CORS: any origin on /api/* (Flask: CORS(app, resources={r"/api/*": {"origins": "*"}}))
-builder.Services.AddCors(o => o.AddPolicy("api", p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+// CORS: only the frontends listed in CORS_ORIGINS (default: the production and Vercel UIs plus localhost).
+var corsOrigins = new CorsOrigins(builder.Configuration["CORS_ORIGINS"]);
+builder.Services.AddCors(o => o.AddPolicy("api", p =>
+    p.SetIsOriginAllowed(corsOrigins.IsAllowed).AllowAnyHeader().AllowAnyMethod()));
 
 // Database: MySQL (MYSQL_URL, ConnectionStrings:Default or MYSQL_HOST / PORT / USER / PASSWORD / DATABASE, same
 // defaults as db.py) or PostgreSQL (a postgres:// DATABASE_URL, e.g. a Render database). See DatabaseConfig.

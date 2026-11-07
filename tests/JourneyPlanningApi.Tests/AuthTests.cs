@@ -171,17 +171,6 @@ public class AuthTests : IDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
     }
 
-    [Fact]
-    public async Task Cors_allows_any_origin_on_api()
-    {
-        var c = _app.CreateClient();
-        var req = new HttpRequestMessage(HttpMethod.Options, "/api/auth/login");
-        req.Headers.Add("Origin", "http://example.com");
-        req.Headers.Add("Access-Control-Request-Method", "POST");
-        var r = await c.SendAsync(req);
-        Assert.Equal("*", r.Headers.GetValues("Access-Control-Allow-Origin").Single());
-    }
-
     private static string MakeToken(DateTimeOffset exp, string secret = "unit-test-secret", string role = "user")
     {
         static string B64(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
