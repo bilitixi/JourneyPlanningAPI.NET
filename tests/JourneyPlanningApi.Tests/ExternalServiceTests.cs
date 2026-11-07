@@ -142,4 +142,23 @@ public class ExternalServiceTests
         Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
         Assert.Equal("Journey not found", (string?)(await TestApp.Json(r))["error"]);
     }
+
+    [Fact]
+    public async Task Recommendations_404_for_someone_elses_journey()
+    {
+        using var app = new TestApp();
+        app.External.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        var (owner, _) = await app.RegisterAndLogin("owner@x.com");
+        var (other, _) = await app.RegisterAndLogin("other@x.com");
+        var id = await CreateJourney(owner, "Queenstown");
+
+        var r = await other.PostAsync($"/api/recommendations/{id}", null);
+        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+        var j = await TestApp.Json(r);
+        Assert.Equal("Journey not found", (string?)j["error"]);
+        Assert.Null(j["destination"]);
+
+        // The owner still gets recommendations
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsync($"/api/recommendations/{id}", null)).StatusCode);
+    }
 }

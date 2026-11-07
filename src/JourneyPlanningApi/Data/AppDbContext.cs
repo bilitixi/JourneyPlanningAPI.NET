@@ -30,6 +30,11 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.Email).IsUnique();
             e.Property(x => x.PasswordHash).HasColumnName("password_hash").HasMaxLength(255).IsRequired();
             e.Property(x => x.Role).HasColumnName("role").HasMaxLength(20).IsRequired().HasDefaultValue("user");
+            e.Property(x => x.IsVerified).HasColumnName("is_verified").IsRequired();
+            e.Property(x => x.VerificationToken).HasColumnName("verification_token").HasMaxLength(255);
+            e.Property(x => x.VerificationExpires).HasColumnName("verification_expires");
+            e.Property(x => x.ResetToken).HasColumnName("reset_token").HasMaxLength(255);
+            e.Property(x => x.ResetExpires).HasColumnName("reset_expires");
             e.Property(x => x.CreatedAt).HasColumnName("created_at")
                 .HasDefaultValueSql("CURRENT_TIMESTAMP").ValueGeneratedOnAdd();
         });

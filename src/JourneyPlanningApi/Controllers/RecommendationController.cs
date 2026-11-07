@@ -22,8 +22,11 @@ public class RecommendationController : ApiControllerBase
     {
         try
         {
-            // Matches the Flask app: the journey is looked up by id only (not restricted to the caller).
-            var journey = await _db.Journeys.AsNoTracking().FirstOrDefaultAsync(j => j.JourneyId == journeyId);
+            // Only the journey's owner may ask for recommendations; someone else's journey gets the same 404 as a
+            // missing one so ids can't be probed. (The Flask app looked journeys up by id only.)
+            var userId = CurrentUserId;
+            var journey = await _db.Journeys.AsNoTracking()
+                .FirstOrDefaultAsync(j => j.JourneyId == journeyId && j.UserId == userId);
             if (journey is null) return Error("Journey not found", 404);
 
             var result = await _ai.GenerateRecommendationsAsync(

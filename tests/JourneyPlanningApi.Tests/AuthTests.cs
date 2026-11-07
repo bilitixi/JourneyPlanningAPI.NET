@@ -26,7 +26,7 @@ public class AuthTests : IDisposable
         var r1 = await c.PostAsJsonAsync("/api/auth/register", body);
         Assert.Equal(HttpStatusCode.Created, r1.StatusCode);
         var j = await TestApp.Json(r1);
-        Assert.Equal("User registered successfully", (string?)j["message"]);
+        Assert.Equal("User registered successfully. Please check your email.", (string?)j["message"]);
         Assert.True((int?)j["user_id"] > 0);
 
         var r2 = await c.PostAsJsonAsync("/api/auth/register", body);

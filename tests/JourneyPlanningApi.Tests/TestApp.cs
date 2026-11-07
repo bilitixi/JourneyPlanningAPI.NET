@@ -22,10 +22,36 @@ public class StubHandler : HttpMessageHandler
         Task.FromResult(Respond(request));
 }
 
+/// <summary>Records emails instead of sending them; set Fail to simulate a delivery failure.</summary>
+public class FakeEmailSender : IEmailSender
+{
+    public List<(string To, string Subject, string Text)> Sent { get; } = new();
+    public bool Fail { get; set; }
+
+    public Task<bool> SendAsync(string to, string subject, string textBody, string htmlBody)
+    {
+        if (Fail) return Task.FromResult(false);
+        lock (Sent) Sent.Add((to, subject, textBody));
+        return Task.FromResult(true);
+    }
+
+    /// <summary>The token from the last link of the given kind ("verify-email" or "reset-password") sent to an address.</summary>
+    public string LastToken(string to, string kind)
+    {
+        lock (Sent)
+        {
+            var text = Sent.Last(m => m.To == to && m.Text.Contains($"/{kind}?token=")).Text;
+            var m = System.Text.RegularExpressions.Regex.Match(text, $@"/{kind}\?token=([^\s]+)");
+            return Uri.UnescapeDataString(m.Groups[1].Value);
+        }
+    }
+}
+
 public class TestApp : WebApplicationFactory<Program>
 {
     private readonly SqliteConnection _conn = new("DataSource=:memory:");
     public StubHandler External { get; } = new();
+    public FakeEmailSender Email { get; } = new();
 
     public TestApp(string? weatherKey = "test-weather-key")
     {
@@ -44,6 +70,8 @@ public class TestApp : WebApplicationFactory<Program>
             services.AddDbContext<AppDbContext>(o => o.UseSqlite(_conn));
             services.AddHttpClient<WeatherService>().ConfigurePrimaryHttpMessageHandler(() => External);
             services.AddHttpClient<AiService>().ConfigurePrimaryHttpMessageHandler(() => External);
+            services.RemoveAll<IEmailSender>();
+            services.AddSingleton<IEmailSender>(Email);
 
             using var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();
@@ -64,6 +92,7 @@ public class TestApp : WebApplicationFactory<Program>
         var reg = await client.PostAsJsonAsync("/api/auth/register",
             new { first_name = "John", last_name = "Smith", email, password });
         var userId = (await reg.Content.ReadFromJsonAsync<JsonObject>())!["user_id"]!.GetValue<int>();
+        await client.PostAsJsonAsync("/api/auth/verify-email", new { token = Email.LastToken(email, "verify-email") });
         var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password });
         var token = (await login.Content.ReadFromJsonAsync<JsonObject>())!["access_token"]!.GetValue<string>();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);

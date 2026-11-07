@@ -8,6 +8,11 @@ public class User
     public string Email { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public string Role { get; set; } = "user";
+    public bool IsVerified { get; set; }
+    public string? VerificationToken { get; set; }
+    public DateTime? VerificationExpires { get; set; }
+    public string? ResetToken { get; set; }
+    public DateTime? ResetExpires { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<Journey> Journeys { get; set; } = new();
 
