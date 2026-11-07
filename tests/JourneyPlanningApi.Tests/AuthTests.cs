@@ -35,6 +35,25 @@ public class AuthTests : IDisposable
     }
 
     [Fact]
+    public async Task Email_matching_ignores_case()
+    {
+        await _app.RegisterAndLogin("Mixed@Case.com");
+        var c = _app.CreateClient();
+
+        var dup = await c.PostAsJsonAsync("/api/auth/register",
+            new { first_name = "J", last_name = "S", email = "mixed@case.com", password = "Password123" });
+        Assert.Equal(HttpStatusCode.BadRequest, dup.StatusCode);
+        Assert.Equal("Email already registered", (string?)(await TestApp.Json(dup))["error"]);
+
+        var login = await c.PostAsJsonAsync("/api/auth/login", new { email = "MIXED@case.COM", password = "Password123" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.Equal("Mixed@Case.com", (string?)(await TestApp.Json(login))["user"]!["email"]);
+
+        var forgot = await c.PostAsJsonAsync("/api/auth/forgot-password", new { email = "mixed@CASE.com" });
+        Assert.Equal("Reset email sent", (string?)(await TestApp.Json(forgot))["message"]);
+    }
+
+    [Fact]
     public async Task Register_reports_first_missing_field()
     {
         var r = await _app.CreateClient().PostAsJsonAsync("/api/auth/register", new { first_name = "x", email = "e" });

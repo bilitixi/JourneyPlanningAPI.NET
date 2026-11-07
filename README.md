@@ -52,8 +52,9 @@ variables (or `RESEND_API_KEY`) so verification and reset emails can be sent; re
 "User created but email failed" when email can't be sent. Render *Secret Files* are mounted at `/etc/secrets/`, where the app does not look for
 `.env`, so use environment variables.
 
-On PostgreSQL the `email` column uses `citext` so email lookups stay case-insensitive as on MySQL; the app
-enables the extension itself (the database owner is allowed to on PostgreSQL 13+).
+Email lookups (register, login, forgot password, ...) ignore case on every database, so `John@Example.com` and
+`john@example.com` are the same account. The `email` column is a plain `varchar`, so databases created by the Flask
+app work as they are; no PostgreSQL extensions are needed.
 
 ## Endpoints
 
