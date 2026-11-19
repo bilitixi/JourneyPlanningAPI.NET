@@ -1,0 +1,78 @@
+name: Deploy to AWS Elastic Beanstalk
+
+# Builds the API, runs the tests and deploys it to an Elastic Beanstalk environment on the
+# ".NET 8 on Amazon Linux 2023" platform. Setup: docs/deploy-aws-elastic-beanstalk.md.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables):
+#   AWS_REGION        e.g. us-east-1
+#   AWS_ROLE_ARN      IAM role GitHub Actions assumes through OIDC (no AWS keys stored in GitHub)
+#   EB_APPLICATION    Elastic Beanstalk application name, e.g. journey-planning
+#   EB_ENVIRONMENT    Elastic Beanstalk environment name, e.g. journey-planning-api
+# The job is skipped until EB_ENVIRONMENT is set.
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # for OIDC sign-in to AWS
+  contents: read
+
+concurrency:
+  group: deploy-elasticbeanstalk
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.EB_ENVIRONMENT != ''
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EB_APPLICATION: ${{ vars.EB_APPLICATION }}
+      EB_ENVIRONMENT: ${{ vars.EB_ENVIRONMENT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test
+        run: dotnet test -c Release
+
+      - name: Build source bundle
+        run: |
+          dotnet publish src/JourneyPlanningApi/JourneyPlanningApi.csproj -c Release -o publish
+          cp -r deploy/elasticbeanstalk/. publish/
+          (cd publish && zip -qr ../app.zip .)
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        run: |
+          VERSION="${GITHUB_SHA::12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          BUCKET=$(aws elasticbeanstalk create-storage-location --query S3Bucket --output text)
+          KEY="$EB_APPLICATION/$VERSION.zip"
+
+          aws s3 cp app.zip "s3://$BUCKET/$KEY"
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APPLICATION" \
+            --version-label "$VERSION" \
+            --description "$(git log -1 --format=%s | cut -c1-200)" \
+            --source-bundle "S3Bucket=$BUCKET,S3Key=$KEY"
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EB_ENVIRONMENT" --version-label "$VERSION"
+          aws elasticbeanstalk wait environment-updated --environment-names "$EB_ENVIRONMENT"
+
+          read -r HEALTH RUNNING <<<"$(aws elasticbeanstalk describe-environments \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query 'Environments[0].[Health,VersionLabel]' --output text)"
+          echo "Health: $HEALTH, running version: $RUNNING"
+          if [ "$RUNNING" != "$VERSION" ] || [ "$HEALTH" = "Red" ]; then
+            echo "::error::Deployment failed. Check the environment's Events and Logs in the Elastic Beanstalk console."
+            exit 1
+          fi

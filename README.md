@@ -39,6 +39,12 @@ Docker: `docker build -t journey-api-net . && docker run -p 5000:5000 --env-file
 If the database can't be reached at startup, the app logs which host it tried and exits with code 1
 (transient errors are retried first).
 
+### Deploying to AWS
+
+See [docs/deploy-aws-elastic-beanstalk.md](docs/deploy-aws-elastic-beanstalk.md): Elastic Beanstalk for the API, RDS
+PostgreSQL for the database, S3 + CloudFront for the frontend, and GitHub Actions
+([deploy-elasticbeanstalk.yml](.github/workflows/deploy-elasticbeanstalk.yml)) deploying on every push to `main`.
+
 ### Deploying to Render
 
 The container doesn't include a database, so `localhost` won't work there. Either:
