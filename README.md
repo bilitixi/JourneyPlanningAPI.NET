@@ -41,7 +41,7 @@ If the database can't be reached at startup, the app logs which host it tried an
 
 ### Deploying to AWS
 
-See [docs/deploy-aws-elastic-beanstalk.md](docs/deploy-aws-elastic-beanstalk.md): Elastic Beanstalk for the API, RDS
+See [docs/deploy-aws-elastic-beanstalk.md](docs/deploy-aws-elastic-beanstalk.md): Elastic Beanstalk for the API, Neon or RDS
 PostgreSQL for the database, S3 + CloudFront for the frontend, and GitHub Actions
 ([deploy-elasticbeanstalk.yml](.github/workflows/deploy-elasticbeanstalk.yml)) deploying on every push to `main`.
 

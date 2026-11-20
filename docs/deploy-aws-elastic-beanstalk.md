@@ -14,7 +14,7 @@ on AWS:
    .NET 8 on Amazon Linux 2023)                  React build
                      │
                      ▼
-     RDS PostgreSQL (private, same VPC)
+     PostgreSQL: Neon (option A) or RDS (option B)
 ```
 
 - The browser only talks to CloudFront, which provides HTTPS. The frontend calls the API on the same address
@@ -25,13 +25,35 @@ on AWS:
   stored in GitHub.
 
 Rough monthly cost in us-east-1 at low traffic: EC2 t4g.micro about $6, its public IPv4 address about $3.65,
-disk about $1, RDS db.t4g.micro about $12 plus 20 GB storage about $2.30, S3 and CloudFront under $1.
-**Total about $25/month.** New AWS accounts get free-tier credits that cover this for a while. Check
-current prices for your region.
+disk about $1, S3 and CloudFront under $1. **About $11/month with Neon's free plan**, or about $25/month with RDS
+(db.t4g.micro about $12 plus 20 GB storage about $2.30). New AWS accounts get free-tier credits that cover this for a
+while. Check current prices for your region.
 
 Pick one region (for example `us-east-1`) and create everything below in it, except where noted.
 
-## 1. Database: RDS PostgreSQL
+## 1. Database
+
+### Option A: Neon
+
+Neon runs on AWS. Create the Elastic Beanstalk environment **in the same AWS region as your Neon project** (shown in
+the Neon console, e.g. *AWS US East (N. Virginia)* = `us-east-1`). Every API request makes a few database queries,
+and crossing regions would add tens of milliseconds to each one.
+
+In the Neon console → your project → **Connect**: pick the branch and database, turn **Connection pooling off**
+(the API is a single server with its own connection pool, so Neon's pooler isn't needed), and copy the connection
+string. It looks like:
+
+```
+postgresql://<user>:<password>@ep-xxxx.<region>.aws.neon.tech/<database>?sslmode=require&channel_binding=require
+```
+
+Use it as `DATABASE_URL` as it is (`channel_binding` is ignored; the connection is still encrypted). If the API
+already uses this Neon database on Render, the data and accounts carry over as they are.
+
+On Neon's free plan the database suspends after a few minutes without queries; the first request after that waits
+a moment while it resumes. Skip step 2c: the Elastic Beanstalk instance reaches Neon over the internet.
+
+### Option B: RDS PostgreSQL
 
 RDS console → **Create database**:
 
@@ -94,7 +116,7 @@ Under **Environment properties** add:
 
 | Name | Value |
 |---|---|
-| `DATABASE_URL` | the URL from step 1 |
+| `DATABASE_URL` | the connection string from step 1 |
 | `JWT_SECRET_KEY` | a long random string (e.g. `openssl rand -base64 48`). Reuse the Render value to keep existing logins valid. |
 | `FRONTEND_URL` | leave for now; set it in step 4 |
 | `OPENWEATHER_API_KEY` | your key |
@@ -106,7 +128,7 @@ Under **Environment properties** add:
 Environment properties are visible to anyone with access to the Elastic Beanstalk console. That's acceptable for a
 personal account; for a shared account, keep the secrets in AWS Secrets Manager instead.
 
-### 2c. Let the API reach the database
+### 2c. Let the API reach the database (RDS only)
 
 1. EC2 console → **Instances** → the instance named `journey-planning-api` → **Security** tab. Note its security
    group (`awseb-e-...-AWSEBSecurityGroup-...`).
@@ -268,8 +290,8 @@ usually a wrong `DATABASE_URL` or the security group rule from step 2c.
 - **Only allow traffic through CloudFront:** in the Elastic Beanstalk instance's security group, replace the inbound
   HTTP rule from `0.0.0.0/0` with the managed prefix list `com.amazonaws.global.cloudfront.origin-facing`.
   Otherwise the API can also be reached over plain HTTP at the `elasticbeanstalk.com` address.
-- **Moving data from Render:** `pg_dump` from Render's external database URL, then restore into RDS. The RDS database
+- **Moving data from Render's database to RDS** (not needed if you already use Neon): `pg_dump` from Render's external database URL, then restore into RDS. The RDS database
   isn't reachable from the internet, so either restore from the Elastic Beanstalk instance, or briefly set the
   database's *Public access* to Yes with an inbound rule for your IP only, restore, and turn it off again.
-- **Turning it off:** terminating the Elastic Beanstalk environment stops the EC2 and IP charges; the RDS database
+- **Turning it off:** terminating the Elastic Beanstalk environment stops the EC2 and IP charges; an RDS database
   must be stopped or deleted separately (a stopped database restarts automatically after 7 days).
